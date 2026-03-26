@@ -59,7 +59,9 @@ def run_basic_operations_module():
     with col_s1:
         shift_time = st.number_input("Time Shift (τ)", value=0.0, step=0.1)
     with col_s2:
-        time_scale_factor = st.number_input("Time Scaling (a)", value=1.0, step=0.1)
+        time_scale_factor = st.number_input(
+            "Time Scaling (a)", value=1.0, step=0.1, min_value=float(0.0)
+        )
     with col_s3:
         fold_signal = st.checkbox("Time Inversion (-t)", value=False)
 
@@ -67,14 +69,14 @@ def run_basic_operations_module():
     # ------------------------------
     transformed_signal = copy.deepcopy(signal)
 
-    if shift_time != 0.0:
-        transformed_signal = transformed_signal.time_shift(shift_time)
+    if fold_signal:
+        transformed_signal = transformed_signal.fold()
 
     if time_scale_factor != 1.0:
         transformed_signal = transformed_signal.time_scale(time_scale_factor)
 
-    if fold_signal:
-        transformed_signal = transformed_signal.fold()
+    if shift_time != 0.0:
+        transformed_signal = transformed_signal.time_shift(shift_time)
 
     # Output
     # --------------------------------
