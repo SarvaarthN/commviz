@@ -3,6 +3,20 @@ import re
 import numpy as np
 
 
+# Compatibility helper: some NumPy builds may not expose `np.trapz`.
+# Provide a small fallback implementation using the composite trapezoidal rule.
+def _trapz(y, x):
+    try:
+        return np.trapz(y, x)
+    except AttributeError:
+        y = np.asarray(y)
+        x = np.asarray(x)
+        if y.size < 2:
+            return 0.0
+        dx = np.diff(x)
+        return np.sum((y[:-1] + y[1:]) * 0.5 * dx)
+
+
 class Signal:
     """Core Signal Class"""
 
@@ -34,24 +48,24 @@ class Signal:
         if self._time_shift != 0.0:
             sign = "-" if self._time_shift > 0 else "+"
             t_str = f"{t_str}{sign}{abs(self._time_shift)}"
-            t_str = f"({t_str})"
 
-        formula_str = self._base_formula
-        # Replace 't' only when not part of a function name (preceded by letter/underscore)
-        formula_str = re.sub(r"(?<![a-zA-Z_])t(?![a-zA-Z_])", t_str, formula_str)
+        # Replace standalone t in base formula
+        formula_str = re.sub(r"\bt\b", t_str, self._base_formula)
 
         return f"{formula_str}"
 
     def evaluate(self, t):
+        # shift
+        t_shifted = t - self._time_shift
+
+        # time scale
+        t_scaled = self._time_scale * t_shifted
+
         # fold
         if self._fold:
-            t = -t
-
-        # scale
-        t_scaled = self._time_scale * t
-
-        # shift
-        t_final = t_scaled - self._time_shift
+            t_final = -t_scaled
+        else:
+            t_final = t_scaled
 
         return self.func(t_final, **self.params)
 
@@ -77,11 +91,27 @@ class Signal:
         )
 
     def __mul__(self, other):
-        return Signal(
-            lambda t: self.evaluate(t) * other.evaluate(t),
-            name=f"({self.name}*{other.name})",
-            formula=f"({self.formula}) · ({other.formula})",
-        )
+        # Support scalar multiplication and Signal * Signal
+        if isinstance(other, (int, float, np.number)):
+            return Signal(
+                lambda t: self.evaluate(t) * other,
+                name=f"({self.name}*{other})",
+                formula=f"{other}·({self.formula})",
+            )
+
+        # Signal * Signal
+        if isinstance(other, Signal):
+            return Signal(
+                lambda t: self.evaluate(t) * other.evaluate(t),
+                name=f"({self.name}*{other.name})",
+                formula=f"({self.formula}) · ({other.formula})",
+            )
+
+        return NotImplemented
+
+    def __rmul__(self, other):
+        # Support scalar * Signal
+        return self.__mul__(other)
 
     # ---------------- Energy & Power ----------------
     def energy(self, t):
@@ -90,7 +120,8 @@ class Signal:
         E = ∫ |x(t)|² dt
         """
         x = self.evaluate(t)
-        return np.trapezoid(np.abs(x) ** 2, t)
+        # Use robust trapezoidal integration (fallback if np.trapz unavailable)
+        return _trapz(np.abs(x) ** 2, t)
 
     def power(self, t):
         """
@@ -102,7 +133,7 @@ class Signal:
         T = t[-1] - t[0]
         if T == 0:
             return 0.0
-        return (1 / T) * np.trapezoid(np.abs(x) ** 2, t)
+        return (1 / T) * _trapz(np.abs(x) ** 2, t)
 
     def classify_signal(self, t):
         E = self.energy(t)
