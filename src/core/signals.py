@@ -113,44 +113,90 @@ class Signal:
         # Support scalar * Signal
         return self.__mul__(other)
 
-    # ---------------- Energy & Power ----------------
     def energy(self, t):
         """
-        Discrete approximation of signal energy:
-        E = ∫ |x(t)|² dt
+        Approximate signal energy over a finite interval:
+        E ≈ ∫_{t_min}^{t_max} |x(t)|² dt
         """
         x = self.evaluate(t)
-        # Use robust trapezoidal integration (fallback if np.trapz unavailable)
-        return _trapz(np.abs(x) ** 2, t)
+
+        if len(t) < 2:
+            return 0.0
+
+        y = np.abs(x) ** 2
+
+        if np.any(np.isnan(y)) or np.any(np.isinf(y)):
+            return np.inf
+
+        return _trapz(y, t)
 
     def power(self, t):
         """
-        Discrete approximation of average power:
-        P = lim(T→∞) (1/2T) ∫ |x(t)|² dt
-        Approximated by time average.
+        Approximate average power over a finite interval:
+        P ≈ (1/T) ∫_{t_min}^{t_max} |x(t)|² dt
+
+        NOTE: True definition is as T → ∞
         """
         x = self.evaluate(t)
-        T = t[-1] - t[0]
-        if T == 0:
+
+        if len(t) < 2:
             return 0.0
-        return (1 / T) * _trapz(np.abs(x) ** 2, t)
+
+        T = t[-1] - t[0]
+        if T <= 0:
+            return 0.0
+
+        y = np.abs(x) ** 2
+
+        if np.any(np.isnan(y)) or np.any(np.isinf(y)):
+            return np.inf
+
+        return _trapz(y, t) / T
 
     def classify_signal(self, t):
-        E = self.energy(t)
+        """
+        Robust classification using convergence behavior.
+        """
 
-        P = self.power(t)
+        x = self.evaluate(t)
 
-        # Check if energy saturates (energy signal) vs grows linearly (power signal)
-        T = t[-1] - t[0]
-        if E < 1e3 and P < 1e-3:
-            return "Zero Signal", E, P
+        if len(t) < 2:
+            return "Undefined", 0.0, 0.0
 
-        # Estimate trend: if energy grows roughly linearly with T → power signal
-        dE_dt = E / T
-        if dE_dt > 0.1:
-            return "Power Signal", E, P
+        dt = t[1] - t[0]
+        N = len(x)
+
+        # Edge case: zero signal
+        if np.all(x == 0):
+            return "Zero Signal", 0.0, 0.0
+
+        # Progressive window sizes
+        splits = np.linspace(N // 5, N - 1, 5).astype(int)
+
+        energies = []
+        for s in splits:
+            E = np.sum(np.abs(x[:s]) ** 2) * dt
+            energies.append(E)
+
+        energies = np.array(energies)
+
+        # ---- Classification logic ----
+
+        # Case 1: Energy stabilizes → Energy Signal
+        if np.all(np.abs(np.diff(energies)) < 1e-2):
+            return "Energy Signal", energies[-1], 0.0
+
+        # Case 2: Energy keeps growing → Power Signal
+        elif np.all(np.diff(energies) > 0):
+            T = t[splits[-1]] - t[0]
+            P = energies[-1] / T if T > 0 else 0.0
+            return "Power Signal", np.inf, P
+
+        # Case 3: Neither
         else:
-            return "Energy Signal", E, P
+            T = t[-1] - t[0]
+            P = energies[-1] / T if T > 0 else 0.0
+            return "Neither", energies[-1], P
 
 
 # Signal Factory Functions
